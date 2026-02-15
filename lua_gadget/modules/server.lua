@@ -3,8 +3,14 @@
 local server = {}
 
 -- Load required libraries
-local socket = require("socket")
-local json = require("json")
+-- Note: socket library needs to be installed system-wide or we need lua_modules
+local socket_ok, socket = pcall(require, "socket")
+if not socket_ok then
+    socket = nil  -- Socket not available, server functions will be limited
+end
+
+-- JSON is loaded by the main gadget file, we'll receive it as a parameter
+local json = nil
 
 -- Configuration
 server.CONFIG = {
@@ -881,10 +887,10 @@ local function processCommand(commandStr)
     elseif command.command_type == "execute_function" then
         -- Log execution if UI is available
         if uiManager then
-            uiManager.log("INFO", "Executing function: " .. (command.payload.function or "unknown"))
+            uiManager.log("INFO", "Executing function: " .. (command.payload["function"] or "unknown"))
         end
-        
-        -- result = executeSdkFunction(command.payload.function, command.payload.parameters)
+
+        -- result = executeSdkFunction(command.payload["function"], command.payload.parameters)
     elseif command.command_type == "query_state" then
         -- Log execution if UI is available
         if uiManager then
