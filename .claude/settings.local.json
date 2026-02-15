@@ -13,7 +13,10 @@
       "Bash(git push:*)",
       "Bash(pip install:*)",
       "Bash(python:*)",
-      "Bash(AISPIRE_MCP_AUTH_REQUIRED=false python:*)"
+      "Bash(AISPIRE_MCP_AUTH_REQUIRED=false python:*)",
+      "Bash(curl:*)",
+      "Bash(/c/Users/dales/Lua/lua53.exe -v)",
+      "Bash(/c/Users/dales/Lua/lua53.exe:*)"
     ]
   }
 }
