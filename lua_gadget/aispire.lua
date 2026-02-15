@@ -34,6 +34,7 @@ function main(script_path)
     local ui = dofile(gadget_dir .. "modules\\ui_manager.inc")
 
     -- Set up the server
+    server.setJson(json)
     server.setUiManager(ui)
 
     -- Log startup

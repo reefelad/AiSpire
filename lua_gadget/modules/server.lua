@@ -1093,15 +1093,21 @@ function server.getLastError()
     return lastError
 end
 
+-- Function to set the JSON module
+function server.setJson(jsonModule)
+    json = jsonModule
+    return true
+end
+
 -- Function to set the UI manager
 function server.setUiManager(ui)
     uiManager = ui
-    
+
     -- Initialize the UI with a reference to this server
     if uiManager and uiManager.initialize then
         uiManager.initialize(server)
     end
-    
+
     return true
 end
 
