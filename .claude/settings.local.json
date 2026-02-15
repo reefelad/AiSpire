@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(unzip:*)",
+      "Bash(lua -l server:*)",
+      "Bash(head:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(lua5.3:*)",
+      "Bash(lua:*)",
+      "Bash(python -m python_mcp_server.server:*)",
+      "Bash(timeout 5 python:*)",
+      "Bash(git push:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(AISPIRE_MCP_AUTH_REQUIRED=false python:*)"
+    ]
+  }
+}
