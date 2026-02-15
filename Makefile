@@ -86,9 +86,24 @@ test-e2e:
 # Bundle the Vectric gadget
 bundle:
 	@echo "Creating Vectric gadget bundle..."
-	@mkdir -p $(VECTRIC_GADGETS_DIR)
-	@cd $(LUA_GADGET_DIR) && zip -r $(VECTRIC_GADGETS_DIR)/aispire.gadget * -x "*.git*" -x "*.DS_Store" -x "*.gitignore"
+	@mkdir -p $(VECTRIC_GADGETS_DIR)/aispire_temp
+	@# Copy main gadget file
+	@cp $(LUA_GADGET_DIR)/aispire.lua $(VECTRIC_GADGETS_DIR)/aispire_temp/
+	@# Copy and rename module files from .lua to .inc
+	@mkdir -p $(VECTRIC_GADGETS_DIR)/aispire_temp/modules
+	@for file in $(LUA_GADGET_DIR)/modules/*.lua; do \
+		base=$$(basename "$$file" .lua); \
+		cp "$$file" "$(VECTRIC_GADGETS_DIR)/aispire_temp/modules/$$base.inc"; \
+	done
+	@# Copy lua_modules if it exists
+	@if [ -d "$(LUA_GADGET_DIR)/lua_modules" ]; then \
+		cp -r $(LUA_GADGET_DIR)/lua_modules $(VECTRIC_GADGETS_DIR)/aispire_temp/; \
+	fi
+	@# Create the .gadget bundle (ZIP file)
+	@cd $(VECTRIC_GADGETS_DIR)/aispire_temp && zip -r ../aispire.gadget * -x "*.git*" -x "*.DS_Store" -x "*.gitignore"
+	@rm -rf $(VECTRIC_GADGETS_DIR)/aispire_temp
 	@echo "Gadget bundle created at $(VECTRIC_GADGETS_DIR)/aispire.gadget"
+	@echo "To install: Extract to C:\\ProgramData\\Vectric\\VCarve Pro\\V12.5\\Gadgets\\aispire\\"
 
 # Build targets
 build-mcp:
