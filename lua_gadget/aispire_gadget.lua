@@ -1,23 +1,38 @@
+-- VECTRIC LUA SCRIPT
 --[[
-                                                    
-             .oo  o .oPYo.         o                
-            .P 8    8                               
-           .P  8 o8 `Yooo. .oPYo. o8 oPYo. .oPYo.   
-          oPooo8  8     `8 8    8  8 8  `' 8oooo8   
-         .P    8  8      8 8    8  8 8     8.       
-        .P     8  8 `YooP' 8YooP'  8 8     `Yooo'   
+
+             .oo  o .oPYo.         o
+            .P 8    8
+           .P  8 o8 `Yooo. .oPYo. o8 oPYo. .oPYo.
+          oPooo8  8     `8 8    8  8 8  `' 8oooo8
+         .P    8  8      8 8    8  8 8     8.
+        .P     8  8 `YooP' 8YooP'  8 8     `Yooo'
 ::::::::..:::::..:..:.....:8 ....::....:::::.....:::
 :::::::::::::::::::::::::::8 :::::::::::::::::::::::
 :::::::::::::::::::::::::::..:::::::::::::::::::::::
     MCP Gadget for Vectric Aspire/V-Carve
-    
+
     This gadget provides a socket server interface to the Vectric software,
     allowing control via the AiSpire Python MCP Server.
-    
+
     Author: Michael Morrissey
     Version: 0.1.0 (Development)
     Date: April 11, 2025
 --]]
+
+-- Set up module search path
+-- Get the directory where this gadget is located
+local gadget_path = debug.getinfo(1, "S").source:match("@(.+[/\\])") or "./"
+package.path = gadget_path .. "?.lua;" .. gadget_path .. "?/init.lua;" .. package.path
+
+-- Set up lua_modules path
+local version = _VERSION:match("%d+%.%d+")
+if version then
+    package.path = gadget_path .. 'lua_modules/share/lua/' .. version .. '/?.lua;' ..
+                   gadget_path .. 'lua_modules/share/lua/' .. version .. '/?/init.lua;' .. package.path
+    package.cpath = gadget_path .. 'lua_modules/lib/lua/' .. version .. '/?.so;' ..
+                    gadget_path .. 'lua_modules/lib/lua/' .. version .. '/?.dll;' .. package.cpath
+end
 
 -- Load required modules
 local server = require("server")
@@ -107,15 +122,15 @@ end
 
 -- Secondary action to show just the UI
 function Gadget_SecondaryAction()
-    -- Load modules if not already loaded
-    if not ui then ui = require("ui_manager") end
-    if not server then server = require("server") end
-    
-    -- Set up UI if needed
-    server.setUiManager(ui)
-    
+    -- Load required modules
+    local ui_module = require("ui_manager")
+    local server_module = require("server")
+
+    -- Set up UI manager
+    server_module.setUiManager(ui_module)
+
     -- Show the UI
-    showUI()
+    server_module.showUI()
 end
 
 -- Menu text for secondary action

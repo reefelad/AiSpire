@@ -1,3 +1,4 @@
+-- VECTRIC LUA SCRIPT
 --[[
     Path Creation and Manipulation Helpers
 

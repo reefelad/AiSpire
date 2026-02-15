@@ -1,3 +1,4 @@
+-- VECTRIC LUA SCRIPT
 --[[
 AiSpire 3D Model Helper Functions
 

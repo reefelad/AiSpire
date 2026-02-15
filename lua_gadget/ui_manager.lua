@@ -1,3 +1,4 @@
+-- VECTRIC LUA SCRIPT
 -- AiSpire UI Manager
 -- Handles all UI elements for the AiSpire gadget
 local ui = {}

@@ -1,6 +1,7 @@
+-- VECTRIC LUA SCRIPT
 --[[
     AiSpire Server Standalone Runner
-    
+
     This script allows running the AiSpire server outside of Vectric for testing purposes.
     It creates mock Vectric SDK objects and functions to simulate the Vectric environment.
     

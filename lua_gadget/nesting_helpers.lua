@@ -1,3 +1,4 @@
+-- VECTRIC LUA SCRIPT
 --[[
 AiSpire Vector Nesting Helper Functions
 

@@ -1,3 +1,4 @@
+-- VECTRIC LUA SCRIPT
 -- Simple server module
 local server = {}
 

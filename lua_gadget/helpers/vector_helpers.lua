@@ -1,3 +1,4 @@
+-- VECTRIC LUA SCRIPT
 --[[
     Vector Drawing Helpers
 

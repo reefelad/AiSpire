@@ -1,6 +1,7 @@
+-- VECTRIC LUA SCRIPT
 --[[
     json.lua - JSON encoding/decoding for AiSpire Lua Gadget
-    
+
     This is a lightweight JSON parser and encoder for Lua,
     based on Lua CJSON and JSON4Lua but simplified for our needs.
     
