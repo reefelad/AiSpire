@@ -57,13 +57,24 @@ AiSpire consists of two primary components:
 
 ## Project Status
 
-AiSpire is currently in active development. Key components have been implemented:
+✅ **MILESTONE: VCarve Gadget Working!**
 
-- **Lua Socket Server**: Basic socket server with command processing pipeline
-- **Command Processing**: Framework for executing Lua code and SDK functions
-- **UI Manager**: Interactive user interface with log viewer and command history
-- **Helper Functions**: Comprehensive library for common operations
-- **Python MCP Server**: Basic MCP protocol implementation with socket client
+The AiSpire gadget now successfully loads in VCarve Pro and displays a functional UI panel.
+
+**Completed Components:**
+
+- ✅ **VCarve Gadget Structure**: Proper file organization and VCarve compatibility
+- ✅ **Module Loading System**: Using `dofile()` with `.inc` extensions
+- ✅ **HTML UI Panel**: Basic control panel displaying gadget status
+- ✅ **Build System**: Makefile creates properly structured `.gadget` bundles
+- 🔧 **Lua Socket Server**: Framework implemented, needs LuaSocket installation
+- 🔧 **Python MCP Server**: Basic MCP protocol implementation with socket client
+
+**In Progress:**
+
+- LuaSocket installation for socket server functionality
+- Full UI implementation with interactive controls
+- MCP server integration and testing
 
 ## UI Features
 
@@ -94,7 +105,24 @@ The UI is accessible in two ways:
 
 ## Getting Started
 
-*Coming soon - Installation and usage instructions will be provided when the first functional version is available.*
+### Quick Start
+
+1. **Build the gadget:**
+   ```bash
+   make bundle
+   ```
+
+2. **Install the gadget:**
+   - Extract `VectricGadgets/aispire.gadget` to:
+     `C:\ProgramData\Vectric\VCarve Pro\V12.5\Gadgets\aispire\`
+
+3. **Restart VCarve Pro**
+
+4. **Open the gadget:**
+   - Go to **Gadgets** → **aispire**
+   - The AiSpire Control Panel will appear
+
+For detailed installation instructions, see [INSTALL.md](INSTALL.md)
 
 ### Building and Testing
 
