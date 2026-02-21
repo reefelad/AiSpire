@@ -1,9 +1,16 @@
+-- VECTRIC LUA SCRIPT
 -- Simple server module
 local server = {}
 
 -- Load required libraries
-local socket = require("socket")
-local json = require("json")
+-- Note: socket library needs to be installed system-wide or we need lua_modules
+local socket_ok, socket = pcall(require, "socket")
+if not socket_ok then
+    socket = nil  -- Socket not available, server functions will be limited
+end
+
+-- JSON is loaded by the main gadget file, we'll receive it as a parameter
+local json = nil
 
 -- Configuration
 server.CONFIG = {
@@ -20,9 +27,62 @@ local isRunning = false
 local lastError = nil
 local uiManager = nil
 
+-- Statistics tracking
+local stats = {
+    total_connections = 0,
+    total_commands = 0,
+    start_time = nil
+}
+
 -- ===================================
 -- SDK Wrapper Functions
 -- ===================================
+-- Helper: safely access VCarve SDK globals without triggering strict mode errors.
+-- require("strict") throws on undeclared globals; rawget bypasses this.
+local function G(name) return rawget(_G, name) end
+
+-- VCarve SDK context — captured in main() where globals are visible, then passed here.
+-- Modules loaded via dofile() cannot see SDK globals via rawget(_G, ...).
+local vectricContext = {}
+
+local function SDK(name)
+    return vectricContext[name]
+end
+
+-- Get the current job by calling VectricJob() as a constructor.
+local function getJob()
+    if vectricContext.VectricJob then
+        local ok, job = pcall(vectricContext.VectricJob)
+        if ok and job then return job end
+    end
+    return nil
+end
+
+-- Get the layer manager from the current job.
+local function getLayerManager()
+    local job = getJob()
+    if job and type(job.GetLayerManager) == "function" then
+        local ok, lm = pcall(function() return job:GetLayerManager() end)
+        if ok then return lm end
+    end
+    return nil
+end
+
+-- Get the toolpath manager from the current job.
+local function getToolpathManager()
+    local job = getJob()
+    if job and type(job.GetToolpathManager) == "function" then
+        local ok, tm = pcall(function() return job:GetToolpathManager() end)
+        if ok then return tm end
+    end
+    return nil
+end
+
+-- Public setter — called by aispire.lua main() after server starts.
+function server.setVectricContext(ctx)
+    vectricContext = ctx or {}
+end
+
 -- SDK wrapper module
 local sdkWrapper = {}
 
@@ -32,12 +92,20 @@ local sdkWrapper = {}
 function sdkWrapper.createNewJob(name, width, height, thickness, in_mm, origin_on_surface)
     local result = { success = false, message = "", data = {} }
     
-    -- Create bounds for the job
-    local bounds = Box2D(0, 0, width, height)
-    
+    -- Create bounds for the job (Box2D requires Point2D objects)
+    local Point2DFunc = SDK("Point2D")
+    local Box2DFunc = SDK("Box2D")
+    if not Box2DFunc or not Point2DFunc then
+        result.message = "Box2D or Point2D not available"
+        return result
+    end
+    local minPt = Point2DFunc(0, 0)
+    local maxPt = Point2DFunc(width, height)
+    local bounds = Box2DFunc(minPt, maxPt)
+
     -- Call Vectric SDK function
-    if VectricJob and type(VectricJob.CreateNewJob) == "function" then
-        local success = VectricJob.CreateNewJob(name, bounds, thickness, in_mm, origin_on_surface)
+    if SDK("VectricJob") and type(SDK("VectricJob").CreateNewJob) == "function" then
+        local success = SDK("VectricJob").CreateNewJob(name, bounds, thickness, in_mm, origin_on_surface)
         if success then
             result.success = true
             result.message = "Job created successfully"
@@ -52,7 +120,7 @@ function sdkWrapper.createNewJob(name, width, height, thickness, in_mm, origin_o
             result.message = "Failed to create job"
         end
     else
-        result.message = "VectricJob.CreateNewJob not available"
+        result.message = "VectricJob not available (no SDK context)"
     end
     
     return result
@@ -63,8 +131,8 @@ function sdkWrapper.openExistingJob(pathname)
     local result = { success = false, message = "", data = {} }
     
     -- Call Vectric SDK function
-    if VectricJob and type(VectricJob.OpenExistingJob) == "function" then
-        local success = VectricJob.OpenExistingJob(pathname)
+    if SDK("VectricJob") and type(SDK("VectricJob").OpenExistingJob) == "function" then
+        local success = SDK("VectricJob").OpenExistingJob(pathname)
         if success then
             result.success = true
             result.message = "Job opened successfully"
@@ -75,7 +143,7 @@ function sdkWrapper.openExistingJob(pathname)
             result.message = "Failed to open job"
         end
     else
-        result.message = "VectricJob.OpenExistingJob not available"
+        result.message = "VectricJob not available (no SDK context)"
     end
     
     return result
@@ -86,12 +154,13 @@ function sdkWrapper.saveCurrentJob(pathname)
     local result = { success = false, message = "", data = {} }
     
     -- Call Vectric SDK function
-    if VectricJob and type(VectricJob.SaveCurrentJob) == "function" then
+    if SDK("VectricJob") or getJob() then
         local success
-        if pathname and Job and type(Job.Save) == "function" then
-            success = Job:Save(pathname)
-        elseif VectricJob.SaveCurrentJob then
-            success = VectricJob.SaveCurrentJob()
+        local job = getJob()
+        if pathname and job and type(job.Save) == "function" then
+            success = job:Save(pathname)
+        elseif SDK("VectricJob") and SDK("VectricJob").SaveCurrentJob then
+            success = SDK("VectricJob").SaveCurrentJob()
         end
         
         if success then
@@ -104,7 +173,7 @@ function sdkWrapper.saveCurrentJob(pathname)
             result.message = "Failed to save job"
         end
     else
-        result.message = "VectricJob.SaveCurrentJob not available"
+        result.message = "VectricJob not available (no SDK context)"
     end
     
     return result
@@ -115,8 +184,8 @@ function sdkWrapper.closeCurrentJob()
     local result = { success = false, message = "", data = {} }
     
     -- Call Vectric SDK function
-    if VectricJob and type(VectricJob.CloseCurrentJob) == "function" then
-        local success = VectricJob.CloseCurrentJob()
+    if SDK("VectricJob") and type(SDK("VectricJob").CloseCurrentJob) == "function" then
+        local success = SDK("VectricJob").CloseCurrentJob()
         if success then
             result.success = true
             result.message = "Job closed successfully"
@@ -124,7 +193,7 @@ function sdkWrapper.closeCurrentJob()
             result.message = "Failed to close job"
         end
     else
-        result.message = "VectricJob.CloseCurrentJob not available"
+        result.message = "VectricJob not available (no SDK context)"
     end
     
     return result
@@ -133,29 +202,30 @@ end
 -- Get job information
 function sdkWrapper.getJobInfo()
     local result = { success = false, message = "", data = {} }
-    
-    if Job then
-        local hasGetName = type(Job.GetName) == "function"
-        local hasGetJobWidth = type(Job.GetJobWidth) == "function"
-        local hasGetJobHeight = type(Job.GetJobHeight) == "function"
-        
+
+    local JobObj = getJob()
+    if JobObj then
+        local hasGetName = type(JobObj.GetName) == "function"
+        local hasGetJobWidth = type(JobObj.GetJobWidth) == "function"
+        local hasGetJobHeight = type(JobObj.GetJobHeight) == "function"
+
         result.success = true
         result.message = "Job information retrieved"
         result.data = {
-            name = hasGetName and Job:GetName() or "Unknown",
-            width = hasGetJobWidth and Job:GetJobWidth() or 0,
-            height = hasGetJobHeight and Job:GetJobHeight() or 0
+            name = hasGetName and JobObj:GetName() or "Unknown",
+            width = hasGetJobWidth and JobObj:GetJobWidth() or 0,
+            height = hasGetJobHeight and JobObj:GetJobHeight() or 0
         }
-        
+
         -- Get material block information if available
-        if type(Job.GetMaterialBlock) == "function" then
-            local materialBlock = Job:GetMaterialBlock()
+        if type(JobObj.GetMaterialBlock) == "function" then
+            local materialBlock = JobObj:GetMaterialBlock()
             if materialBlock then
                 local hasGetWidth = type(materialBlock.GetWidth) == "function"
                 local hasGetHeight = type(materialBlock.GetHeight) == "function"
                 local hasGetThickness = type(materialBlock.GetThickness) == "function"
                 local hasIsDoubleSided = type(materialBlock.IsDoubleSided) == "function"
-                
+
                 result.data.materialBlock = {
                     width = hasGetWidth and materialBlock:GetWidth() or 0,
                     height = hasGetHeight and materialBlock:GetHeight() or 0,
@@ -167,7 +237,7 @@ function sdkWrapper.getJobInfo()
     else
         result.message = "Job object not available"
     end
-    
+
     return result
 end
 
@@ -175,8 +245,9 @@ end
 function sdkWrapper.setMaterialBlockProperties(width, height, thickness)
     local result = { success = false, message = "", data = {} }
     
-    if Job and type(Job.GetMaterialBlock) == "function" then
-        local materialBlock = Job:GetMaterialBlock()
+    local job = getJob()
+    if job and type(job.GetMaterialBlock) == "function" then
+        local materialBlock = job:GetMaterialBlock()
         if materialBlock then
             if width and type(materialBlock.SetWidth) == "function" then 
                 materialBlock:SetWidth(width) 
@@ -209,9 +280,9 @@ function sdkWrapper.setMaterialBlockProperties(width, height, thickness)
             result.message = "Material block not available"
         end
     else
-        result.message = "Job object not available"
+        result.message = "Job not available (no open job or SDK context missing)"
     end
-    
+
     return result
 end
 
@@ -222,9 +293,9 @@ function sdkWrapper.createCircle(x, y, radius)
     local result = { success = false, message = "", data = {} }
     
     -- Call Vectric SDK function if available or use our mock implementation
-    if Global and type(Global.CreateCircle) == "function" then
+    if SDK("Global") and type(SDK("Global").CreateCircle) == "function" then
         -- Use the real SDK function
-        local circle = Global.CreateCircle(x, y, radius, 0.01, 0) -- default tolerance and z-value
+        local circle = SDK("Global").CreateCircle(x, y, radius, 0.01, 0) -- default tolerance and z-value
         result.success = true
         result.message = "Circle created successfully"
         result.data = {
@@ -234,8 +305,8 @@ function sdkWrapper.createCircle(x, y, radius)
         }
     else
         -- Try to create a contour if available
-        if type(Contour) == "function" then
-            local contour = Contour()
+        if type(SDK("Contour")) == "function" then
+            local contour = SDK("Contour")()
             -- Create a circle using 4 arcs
             local steps = 4
             local angle = 0
@@ -264,7 +335,7 @@ function sdkWrapper.createCircle(x, y, radius)
                 radius = radius
             }
         else
-            result.message = "Circle creation not available"
+            result.message = "Circle creation not available (Contour SDK object missing)"
         end
     end
     
@@ -275,9 +346,9 @@ end
 function sdkWrapper.createRectangle(x1, y1, x2, y2)
     local result = { success = false, message = "", data = {} }
     
-    if type(Contour) == "function" then
-        local contour = Contour()
-        
+    if type(SDK("Contour")) == "function" then
+        local contour = SDK("Contour")()
+
         -- Add four points to form a rectangle
         contour:AppendPoint(x1, y1)
         contour:AppendLineTo(x2, y1)
@@ -299,18 +370,18 @@ function sdkWrapper.createRectangle(x1, y1, x2, y2)
             height = math.abs(y2 - y1)
         }
     else
-        result.message = "Contour creation not available"
+        result.message = "Rectangle creation not available (Contour SDK object missing)"
     end
-    
+
     return result
 end
 
--- Create text 
+-- Create text
 function sdkWrapper.createText(text, x, y, fontName, fontSize, bold, italic)
     local result = { success = false, message = "", data = {} }
     
-    if type(Text) == "function" then
-        local textObj = Text()
+    if type(SDK("Text")) == "function" then
+        local textObj = SDK("Text")()
         textObj:SetFont(fontName or "Arial", fontSize or 12, bold or false, italic or false)
         textObj:SetText(text)
         textObj:DrawAtPosition(x, y)
@@ -327,7 +398,7 @@ function sdkWrapper.createText(text, x, y, fontName, fontSize, bold, italic)
             italic = italic or false
         }
     else
-        result.message = "Text creation not available"
+        result.message = "Text creation not available (Text SDK object missing)"
     end
     
     return result
@@ -337,8 +408,8 @@ end
 function sdkWrapper.transformVectors(transformType, parameters)
     local result = { success = false, message = "", data = {} }
     
-    if type(Transformation2D) == "function" and Selection then
-        local transformation = Transformation2D()
+    if type(SDK("Transformation2D")) == "function" then
+        local transformation = SDK("Transformation2D")()
         
         if transformType == "move" then
             transformation:Translate(parameters.x or 0, parameters.y or 0)
@@ -379,7 +450,7 @@ function sdkWrapper.transformVectors(transformType, parameters)
         result.success = true
         result.message = "Transformation applied successfully"
     else
-        result.message = "Transformation functionality not available"
+        result.message = "Transformation not available (Transformation2D SDK object missing)"
     end
     
     return result
@@ -391,8 +462,9 @@ end
 function sdkWrapper.createLayer(name, color, isVisible, isActive)
     local result = { success = false, message = "", data = {} }
     
-    if LayerManager and type(LayerManager.AddNewLayer) == "function" then
-        local success = LayerManager:AddNewLayer(name, color, isVisible or true, isActive or false)
+    local lm = getLayerManager()
+    if lm and type(lm.AddNewLayer) == "function" then
+        local success = lm:AddNewLayer(name, color, isVisible or true, isActive or false)
         if success then
             result.success = true
             result.message = "Layer created successfully"
@@ -406,36 +478,37 @@ function sdkWrapper.createLayer(name, color, isVisible, isActive)
             result.message = "Failed to create layer"
         end
     else
-        result.message = "Layer manager not available"
+        result.message = "Layer manager not available (no open job or SDK context missing)"
     end
-    
+
     return result
 end
 
 -- Get layer information
 function sdkWrapper.getLayerInfo()
     local result = { success = false, message = "", data = { layers = {} } }
-    
-    if LayerManager and type(LayerManager.GetNumLayers) == "function" then
-        local numLayers = LayerManager:GetNumLayers()
-        
+
+    local LM = getLayerManager()
+    if LM and type(LM.GetNumLayers) == "function" then
+        local numLayers = LM:GetNumLayers()
+
         for i = 0, numLayers - 1 do
-            if type(LayerManager.GetLayerName) == "function" then
-                local layerName = LayerManager:GetLayerName(i)
+            if type(LM.GetLayerName) == "function" then
+                local layerName = LM:GetLayerName(i)
                 table.insert(result.data.layers, {
                     name = layerName,
                     index = i
                 })
             end
         end
-        
+
         result.success = true
         result.message = "Layer information retrieved"
         result.data.count = numLayers
     else
-        result.message = "Layer manager not available"
+        result.message = "Layer manager not available (no open job or SDK context missing)"
     end
-    
+
     return result
 end
 
@@ -443,8 +516,9 @@ end
 function sdkWrapper.setActiveLayer(name)
     local result = { success = false, message = "", data = {} }
     
-    if LayerManager and type(LayerManager.SetActiveLayer) == "function" then
-        local success = LayerManager:SetActiveLayer(name)
+    local lm = getLayerManager()
+    if lm and type(lm.SetActiveLayer) == "function" then
+        local success = lm:SetActiveLayer(name)
         if success then
             result.success = true
             result.message = "Active layer set successfully"
@@ -453,9 +527,9 @@ function sdkWrapper.setActiveLayer(name)
             result.message = "Failed to set active layer"
         end
     else
-        result.message = "Layer manager not available"
+        result.message = "Layer manager not available (no open job or SDK context missing)"
     end
-    
+
     return result
 end
 
@@ -463,8 +537,9 @@ end
 function sdkWrapper.setLayerVisibility(name, isVisible)
     local result = { success = false, message = "", data = {} }
     
-    if LayerManager and type(LayerManager.SetLayerVisibility) == "function" then
-        local success = LayerManager:SetLayerVisibility(name, isVisible)
+    local lm = getLayerManager()
+    if lm and type(lm.SetLayerVisibility) == "function" then
+        local success = lm:SetLayerVisibility(name, isVisible)
         if success then
             result.success = true
             result.message = "Layer visibility set successfully"
@@ -473,9 +548,9 @@ function sdkWrapper.setLayerVisibility(name, isVisible)
             result.message = "Failed to set layer visibility"
         end
     else
-        result.message = "Layer manager not available"
+        result.message = "Layer manager not available (no open job or SDK context missing)"
     end
-    
+
     return result
 end
 
@@ -485,9 +560,10 @@ end
 function sdkWrapper.getToolpaths()
     local result = { success = false, message = "", data = { toolpaths = {} } }
     
-    if ToolpathManager then
-        if type(ToolpathManager.GetToolpathNames) == "function" then
-            local toolpathNames = ToolpathManager:GetToolpathNames() or {}
+    local TM = getToolpathManager()
+    if TM then
+        if type(TM.GetToolpathNames) == "function" then
+            local toolpathNames = TM:GetToolpathNames() or {}
             
             for _, name in ipairs(toolpathNames) do
                 table.insert(result.data.toolpaths, { name = name })
@@ -500,7 +576,7 @@ function sdkWrapper.getToolpaths()
             result.message = "GetToolpathNames function not available"
         end
     else
-        result.message = "Toolpath manager not available"
+        result.message = "Toolpath manager not available (no open job or SDK context missing)"
     end
     
     return result
@@ -510,11 +586,11 @@ end
 function sdkWrapper.createProfileToolpath(name, toolDiameter, cutDepth, parameters)
     local result = { success = false, message = "", data = {} }
     
-    if ToolpathManager and type(Tool) == "function" then
+    if getToolpathManager() and type(SDK("Tool")) == "function" then
         -- Create a tool
-        local tool = Tool()
+        local tool = SDK("Tool")()
         tool:SetToolDiameter(toolDiameter)
-        
+
         -- Create a profile toolpath (simplified version)
         -- This is a representative implementation - actual implementation would use SDK-specific functions
         
@@ -527,9 +603,9 @@ function sdkWrapper.createProfileToolpath(name, toolDiameter, cutDepth, paramete
             parameters = parameters
         }
     else
-        result.message = "Toolpath creation not available"
+        result.message = "Toolpath creation not available (no open job or SDK context missing)"
     end
-    
+
     return result
 end
 
@@ -537,11 +613,11 @@ end
 function sdkWrapper.createPocketToolpath(name, toolDiameter, cutDepth, parameters)
     local result = { success = false, message = "", data = {} }
     
-    if ToolpathManager and type(Tool) == "function" then
+    if getToolpathManager() and type(SDK("Tool")) == "function" then
         -- Create a tool
-        local tool = Tool()
+        local tool = SDK("Tool")()
         tool:SetToolDiameter(toolDiameter)
-        
+
         -- Create a pocket toolpath (simplified version)
         -- This is a representative implementation - actual implementation would use SDK-specific functions
         
@@ -554,9 +630,9 @@ function sdkWrapper.createPocketToolpath(name, toolDiameter, cutDepth, parameter
             parameters = parameters
         }
     else
-        result.message = "Toolpath creation not available"
+        result.message = "Toolpath creation not available (no open job or SDK context missing)"
     end
-    
+
     return result
 end
 
@@ -564,8 +640,9 @@ end
 function sdkWrapper.saveToolpaths(filepath)
     local result = { success = false, message = "", data = {} }
     
-    if ToolpathManager and type(ToolpathManager.SaveToolpathsToFile) == "function" then
-        local success = ToolpathManager:SaveToolpathsToFile(filepath)
+    local TM = getToolpathManager()
+    if TM and type(TM.SaveToolpathsToFile) == "function" then
+        local success = TM:SaveToolpathsToFile(filepath)
         if success then
             result.success = true
             result.message = "Toolpaths saved successfully"
@@ -574,7 +651,7 @@ function sdkWrapper.saveToolpaths(filepath)
             result.message = "Failed to save toolpaths"
         end
     else
-        result.message = "Toolpath saving not available"
+        result.message = "Toolpath saving not available (no open job or SDK context missing)"
     end
     
     return result
@@ -585,44 +662,46 @@ end
 -- Get application information
 function sdkWrapper.getAppInfo()
     local result = { success = true, message = "Application information retrieved", data = {} }
-    
-    if Global then
-        local hasIsAspire = type(Global.IsAspire) == "function"
-        local hasIsBeta = type(Global.IsBetaBuild) == "function"
-        local hasGetAppVersion = type(Global.GetAppVersion) == "function"
-        local hasGetBuildVersion = type(Global.GetBuildVersion) == "function"
-        
-        result.data.isAspire = hasIsAspire and Global.IsAspire() or false
-        result.data.isBeta = hasIsBeta and Global.IsBetaBuild() or false
-        result.data.appVersion = hasGetAppVersion and Global.GetAppVersion() or "Unknown"
-        result.data.buildVersion = hasGetBuildVersion and Global.GetBuildVersion() or "Unknown"
+
+    local GlobalObj = SDK("Global")
+    if GlobalObj then
+        local hasIsAspire = type(GlobalObj.IsAspire) == "function"
+        local hasIsBeta = type(GlobalObj.IsBetaBuild) == "function"
+        local hasGetAppVersion = type(GlobalObj.GetAppVersion) == "function"
+        local hasGetBuildVersion = type(GlobalObj.GetBuildVersion) == "function"
+
+        result.data.isAspire = hasIsAspire and GlobalObj.IsAspire() or false
+        result.data.isBeta = hasIsBeta and GlobalObj.IsBetaBuild() or false
+        result.data.appVersion = hasGetAppVersion and GlobalObj.GetAppVersion() or "Unknown"
+        result.data.buildVersion = hasGetBuildVersion and GlobalObj.GetBuildVersion() or "Unknown"
     else
-        result.message = "Global object not available"
+        result.message = "Global object not available (SDK context missing)"
         result.success = false
     end
-    
+
     return result
 end
 
 -- Get file locations
 function sdkWrapper.getFileLocations()
     local result = { success = true, message = "File locations retrieved", data = {} }
-    
-    if Global then
-        local hasGetDataLocation = type(Global.GetDataLocation) == "function"
-        local hasGetPostProcessorLocation = type(Global.GetPostProcessorLocation) == "function"
-        local hasGetToolDatabaseLocation = type(Global.GetToolDatabaseLocation) == "function"
-        local hasGetGadgetsLocation = type(Global.GetGadgetsLocation) == "function"
-        
-        result.data.dataLocation = hasGetDataLocation and Global.GetDataLocation() or "Unknown"
-        result.data.postprocessorLocation = hasGetPostProcessorLocation and Global.GetPostProcessorLocation() or "Unknown"
-        result.data.toolDatabaseLocation = hasGetToolDatabaseLocation and Global.GetToolDatabaseLocation() or "Unknown"
-        result.data.gadgetsLocation = hasGetGadgetsLocation and Global.GetGadgetsLocation() or "Unknown"
+
+    local GlobalObj = SDK("Global")
+    if GlobalObj then
+        local hasGetDataLocation = type(GlobalObj.GetDataLocation) == "function"
+        local hasGetPostProcessorLocation = type(GlobalObj.GetPostProcessorLocation) == "function"
+        local hasGetToolDatabaseLocation = type(GlobalObj.GetToolDatabaseLocation) == "function"
+        local hasGetGadgetsLocation = type(GlobalObj.GetGadgetsLocation) == "function"
+
+        result.data.dataLocation = hasGetDataLocation and GlobalObj.GetDataLocation() or "Unknown"
+        result.data.postprocessorLocation = hasGetPostProcessorLocation and GlobalObj.GetPostProcessorLocation() or "Unknown"
+        result.data.toolDatabaseLocation = hasGetToolDatabaseLocation and GlobalObj.GetToolDatabaseLocation() or "Unknown"
+        result.data.gadgetsLocation = hasGetGadgetsLocation and GlobalObj.GetGadgetsLocation() or "Unknown"
     else
-        result.message = "Global object not available"
+        result.message = "Global object not available (SDK context missing)"
         result.success = false
     end
-    
+
     return result
 end
 
@@ -675,10 +754,33 @@ local function createSandbox()
     sandbox.string = string
     sandbox.math = math
     sandbox.table = table
-    
+    sandbox.pcall = pcall
+    sandbox.tostring = tostring
+    sandbox.tonumber = tonumber
+    sandbox.type = type
+    sandbox.pairs = pairs
+    sandbox.ipairs = ipairs
+    sandbox.print = print
+    sandbox.select = select
+    sandbox.table.unpack = table.unpack or unpack
+    sandbox.error = error
+
     -- Add SDK wrapper functions
     sandbox.sdkWrapper = sdkWrapper
-    
+
+    -- Add VCarve SDK objects so execute_lua code can call them directly
+    sandbox.VectricJob      = SDK("VectricJob")
+    sandbox.Global          = SDK("Global")
+    sandbox.Point2D         = SDK("Point2D")
+    sandbox.Box2D           = SDK("Box2D")
+    sandbox.Contour         = SDK("Contour")
+    sandbox.Text            = SDK("Text")
+    sandbox.Transformation2D = SDK("Transformation2D")
+    sandbox.Tool            = SDK("Tool")
+    sandbox.Job             = getJob()
+    sandbox.LayerManager    = getLayerManager()
+    sandbox.ToolpathManager = getToolpathManager()
+
     return sandbox
 end
 
@@ -778,8 +880,18 @@ local function executeSdkFunction(functionName, params)
     local handler = commandHandlers[functionName]
     
     if handler then
-        local result = handler(table.unpack(params or {}))
-        
+        local ok, result = pcall(handler, table.unpack(params or {}))
+        if not ok then
+            return {
+                status = "error",
+                result = {
+                    message = "SDK function error: " .. tostring(result),
+                    data = {},
+                    type = functionName .. "_error"
+                }
+            }
+        end
+
         return {
             status = result.success and "success" or "error",
             result = {
@@ -806,12 +918,21 @@ local function sendResponse(response)
     
     local responseStr, err = json.encode(response)
     if not responseStr then
-        -- If JSON encoding fails, try to send a simple error response
-        responseStr = '{"status":"error","result":{"message":"Failed to encode response: ' .. 
-                     (err or "unknown error") .. '","data":{},"type":"encoding_error"}}'
+        -- If JSON encoding fails, sanitize the error (strip backslashes/quotes to avoid invalid JSON)
+        local safeMsg = tostring(err or "unknown error"):gsub('[\\"]', '_')
+        responseStr = '{"status":"error","result":{"message":"Failed to encode response: ' ..
+                     safeMsg .. '","data":{},"type":"encoding_error"}}'
     end
     
-    client:send(responseStr .. "\n")
+    local sendOk, sendErr = pcall(function()
+        client:send(responseStr .. "\n")
+    end)
+    if not sendOk then
+        -- Socket send failed — clean up broken client
+        pcall(function() client:close() end)
+        client = nil
+        return false
+    end
     return true
 end
 
@@ -880,29 +1001,44 @@ local function processCommand(commandStr)
     elseif command.command_type == "execute_function" then
         -- Log execution if UI is available
         if uiManager then
-            uiManager.log("INFO", "Executing function: " .. (command.payload.function or "unknown"))
+            uiManager.log("INFO", "Executing function: " .. (command.payload["function"] or "unknown"))
         end
-        
-        -- result = executeSdkFunction(command.payload.function, command.payload.parameters)
+
+        result = executeSdkFunction(command.payload["function"], command.payload.parameters)
     elseif command.command_type == "query_state" then
         -- Log execution if UI is available
         if uiManager then
             uiManager.log("INFO", "Querying system state")
         end
-        
-        -- Query the state of various SDK objects
-        result = {
-            status = "success",
-            result = {
-                message = "Current state retrieved",
-                data = {
-                    job = sdkWrapper.getJobInfo().data,
-                    app = sdkWrapper.getAppInfo().data,
-                    layers = sdkWrapper.getLayerInfo().data
-                },
-                type = "state_query_result"
+
+        -- Query the state of various SDK objects (wrapped in pcall for safety)
+        local queryOk, queryData = pcall(function()
+            return {
+                job = sdkWrapper.getJobInfo().data,
+                app = sdkWrapper.getAppInfo().data,
+                layers = sdkWrapper.getLayerInfo().data
             }
-        }
+        end)
+
+        if queryOk then
+            result = {
+                status = "success",
+                result = {
+                    message = "Current state retrieved",
+                    data = queryData,
+                    type = "state_query_result"
+                }
+            }
+        else
+            result = {
+                status = "error",
+                result = {
+                    message = "State query error: " .. tostring(queryData),
+                    data = {},
+                    type = "state_query_error"
+                }
+            }
+        end
     else
         result = {
             status = "error",
@@ -999,9 +1135,10 @@ function server.startServer()
         print("Failed to start server: " .. (lastError or "Unknown error"))
         return false
     end
-    
+
     print("Server started on port " .. server.CONFIG.PORT)
     isRunning = true
+    stats.start_time = os.time()
     return true
 end
 
@@ -1034,7 +1171,8 @@ function server.runServer()
         if client then
             client:settimeout(server.CONFIG.TIMEOUT)
             print("Client connected")
-            
+            stats.total_connections = stats.total_connections + 1
+
             -- Log connection if UI is available
             if uiManager then
                 uiManager.log("INFO", "Client connected")
@@ -1048,6 +1186,7 @@ function server.runServer()
         local data, err = client:receive()
         if data then
             print("Received data: " .. data)
+            stats.total_commands = stats.total_commands + 1
             local response = processCommand(data)
             sendResponse(response)
         elseif err ~= "timeout" then
@@ -1076,6 +1215,103 @@ function server.runServer()
     return true
 end
 
+-- Non-blocking server tick (called by JavaScript heartbeat)
+-- This function is designed to be called frequently (every 100ms) and return quickly
+function server.runServerTick()
+    -- CRITICAL: Verify server is actually running and socket exists
+    if not isRunning then
+        if uiManager then
+            uiManager.log("WARNING", "runServerTick called but isRunning=false")
+        end
+        return false
+    end
+
+    if not socketServer then
+        if uiManager then
+            uiManager.log("ERROR", "runServerTick called but socketServer is nil!")
+        end
+        return false
+    end
+
+    local maxProcessTime = 0.05  -- Max 50ms per tick (keeps UI responsive)
+    local startTime = socket.gettime()
+
+    -- Accept new connections (non-blocking)
+    socketServer:settimeout(0)  -- CRITICAL: Non-blocking mode
+
+    local newClient, err = socketServer:accept()
+    if newClient then
+        if uiManager then
+            uiManager.log("INFO", "Client connected via runServerTick")
+        end
+
+        -- For simplicity, replace old client with new one
+        -- (In production, you might want to handle multiple clients)
+        if client then
+            client:close()
+        end
+        client = newClient
+        client:settimeout(0)  -- CRITICAL: Non-blocking mode
+        stats.total_connections = stats.total_connections + 1
+
+        if uiManager then
+            uiManager.setConnectionStatus("connected", "Client connected from " .. server.CONFIG.HOST)
+        end
+    elseif err and err ~= "timeout" then
+        -- Log accept errors (except timeout which is normal)
+        if uiManager then
+            uiManager.log("WARNING", "Socket accept error: " .. tostring(err))
+        end
+    end
+
+    -- Process existing client (with time limit)
+    if client then
+        -- Check if we have time budget left
+        if socket.gettime() - startTime > maxProcessTime then
+            return true  -- Out of time, return quickly
+        end
+
+        client:settimeout(0)  -- CRITICAL: Non-blocking
+        local data, err = client:receive("*l")
+
+        if data then
+            stats.total_commands = stats.total_commands + 1
+            if uiManager then
+                uiManager.log("INFO", "Processing command: " .. data:sub(1, 100))
+            end
+
+            local cmdOk, cmdErr = pcall(function()
+                local response = processCommand(data)
+                sendResponse(response)
+            end)
+            if not cmdOk then
+                -- Command processing crashed — try to send error, don't kill server
+                if uiManager then
+                    uiManager.log("ERROR", "Command crashed: " .. tostring(cmdErr))
+                end
+                pcall(function()
+                    local safeErr = tostring(cmdErr):gsub('[\\"]', '_')
+                    local errResp = '{"status":"error","result":{"message":"Server error: ' ..
+                        safeErr .. '","data":{},"type":"server_error"}}'
+                    client:send(errResp .. "\n")
+                end)
+            end
+        elseif err ~= "timeout" then
+            -- Client disconnected or error
+            client:close()
+            client = nil
+
+            if uiManager then
+                uiManager.log("INFO", "Client disconnected: " .. (err or "unknown error"))
+                uiManager.setConnectionStatus("disconnected", "Client disconnected: " .. (err or "unknown error"))
+            end
+        end
+        -- If err == "timeout", that's fine - no data available right now
+    end
+
+    return true
+end
+
 -- Function to check if the server is running
 function server.isRunning()
     return isRunning
@@ -1086,16 +1322,41 @@ function server.getLastError()
     return lastError
 end
 
+-- Function to set the JSON module
+function server.setJson(jsonModule)
+    json = jsonModule
+    return true
+end
+
 -- Function to set the UI manager
 function server.setUiManager(ui)
     uiManager = ui
-    
+
     -- Initialize the UI with a reference to this server
     if uiManager and uiManager.initialize then
         uiManager.initialize(server)
     end
-    
+
     return true
+end
+
+-- Function to get server statistics
+function server.getStats()
+    return {
+        total_connections = stats.total_connections,
+        total_commands = stats.total_commands,
+        uptime = stats.start_time and (os.time() - stats.start_time) or 0
+    }
+end
+
+-- Get server state for debugging
+function server.getServerState()
+    return {
+        isRunning = isRunning,
+        hasSocket = socketServer ~= nil,
+        hasClient = client ~= nil,
+        port = server.CONFIG.PORT
+    }
 end
 
 -- Function to show the UI dialog
